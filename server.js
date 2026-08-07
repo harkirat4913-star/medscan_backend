@@ -7,22 +7,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Read Gemini API key from Render Environment Variables
+// Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// AI Endpoint
+console.log("API KEY EXISTS:", !!process.env.GEMINI_API_KEY);
+
+// Ask AI
 app.post("/ask", async (req, res) => {
   try {
     const prompt = req.body.prompt;
 
-    if (!prompt) {
-      return res.status(400).json({
-        answer: "Please provide a prompt",
-      });
-    }
-
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.5-flash",
     });
 
     const result = await model.generateContent(prompt);
@@ -40,12 +36,11 @@ app.post("/ask", async (req, res) => {
   }
 });
 
-// Home Route
+// Home route
 app.get("/", (req, res) => {
   res.send("MedScan AI Backend Running");
 });
 
-// Start Server
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
