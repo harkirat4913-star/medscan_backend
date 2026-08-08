@@ -7,7 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-console.log("SERVER VERSION 2");
+console.log("SERVER VERSION 3");
 console.log("API KEY EXISTS:", !!process.env.GEMINI_API_KEY);
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -17,22 +17,22 @@ app.post("/ask", async (req, res) => {
     const prompt = req.body.prompt;
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: "gemini-1.5-flash"
     });
 
-    console.log("Using model: gemini-2.5-flash");
+    console.log("Using model: gemini-1.5-flash");
 
     const result = await model.generateContent(prompt);
     const answer = result.response.text();
 
     res.json({
-      answer: answer,
+      answer: answer
     });
   } catch (error) {
     console.error("Gemini Error:", error);
 
     res.status(500).json({
-      answer: "Failed to get AI response",
+      answer: "Failed to get AI response"
     });
   }
 });
