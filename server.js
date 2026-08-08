@@ -7,12 +7,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Gemini API
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
+console.log("SERVER VERSION 2");
 console.log("API KEY EXISTS:", !!process.env.GEMINI_API_KEY);
 
-// Ask AI
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 app.post("/ask", async (req, res) => {
   try {
     const prompt = req.body.prompt;
@@ -20,6 +19,8 @@ app.post("/ask", async (req, res) => {
     const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
     });
+
+    console.log("Using model: gemini-2.5-flash");
 
     const result = await model.generateContent(prompt);
     const answer = result.response.text();
@@ -36,7 +37,6 @@ app.post("/ask", async (req, res) => {
   }
 });
 
-// Home route
 app.get("/", (req, res) => {
   res.send("MedScan AI Backend Running");
 });
