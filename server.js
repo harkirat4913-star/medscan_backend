@@ -1,47 +1,56 @@
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const Groq = require("groq-sdk");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-console.log("SERVER VERSION 4");
-console.log("API KEY EXISTS:", !!process.env.GEMINI_API_KEY);
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+app.get("/", (req, res) => {
+  res.send("MedScan Backend Running With Groq");
+});
 
 app.post("/ask", async (req, res) => {
   try {
     const prompt = req.body.prompt;
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash"
+    if (!prompt) {
+      return res.status(400).json({
+        error: "Prompt required",
+      });
+    }
+
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      model: "llama-3.1-8b-instant", // you can also use "llama-3.3-70b-versatile"
     });
 
-    console.log("Using model: gemini-2.0-flash");
-
-    const result = await model.generateContent(prompt);
-    const answer = result.response.text();
+    const answer = chatCompletion.choices[0]?.message?.content || "No response from AI";
 
     res.json({
-      answer: answer,
+      answer,
     });
-  } catch (error) {
-    console.error("Gemini Error:", error);
-
+  } catch (err) {
+    console.error(err);
     res.status(500).json({
-      answer: "Failed to get AI response",
-      error: error.message,
+      error: err.message,
     });
   }
 });
 
-app.get("/", (req, res) => {
-  res.send("MedScan AI Backend Running");
-});
-
+// Important for Render
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
