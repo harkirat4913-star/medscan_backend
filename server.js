@@ -20,18 +20,18 @@ const upload = multer({
 });
 
 
-// ----------------------------------------------------
+// ====================================================
 // HOME
-// ----------------------------------------------------
+// ====================================================
 
 app.get("/", (req, res) => {
   res.send("MedScan Backend Running With Groq Vision");
 });
 
 
-// ----------------------------------------------------
-// TEXT /ASK ENDPOINT
-// ----------------------------------------------------
+// ====================================================
+// TEXT /ask
+// ====================================================
 
 app.post("/ask", async (req, res) => {
   try {
@@ -43,7 +43,7 @@ app.post("/ask", async (req, res) => {
       });
     }
 
-    const chatCompletion =
+    const completion =
       await groq.chat.completions.create({
         model: "llama-3.1-8b-instant",
 
@@ -56,7 +56,7 @@ app.post("/ask", async (req, res) => {
       });
 
     const answer =
-      chatCompletion.choices[0]?.message?.content ||
+      completion.choices[0]?.message?.content ||
       "No response from AI";
 
     res.json({
@@ -64,7 +64,7 @@ app.post("/ask", async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("ASK ERROR:", err);
 
     res.status(500).json({
       error: err.message,
@@ -73,9 +73,11 @@ app.post("/ask", async (req, res) => {
 });
 
 
-// ----------------------------------------------------
-// IMAGE ANALYSIS - NO OCR
-// ----------------------------------------------------
+// ====================================================
+// IMAGE ANALYSIS
+// NO OCR
+// IMAGE GOES DIRECTLY TO GROQ VISION
+// ====================================================
 
 app.post(
   "/analyze-image",
@@ -86,6 +88,10 @@ app.post(
 
     try {
 
+      // ----------------------------------------------
+      // CHECK IMAGE
+      // ----------------------------------------------
+
       if (!req.file) {
         return res.status(400).json({
           error: "No image uploaded",
@@ -94,12 +100,17 @@ app.post(
 
       imagePath = req.file.path;
 
+
+      // ----------------------------------------------
+      // GET LANGUAGE
+      // ----------------------------------------------
+
       const language =
         req.body.language || "English";
 
 
       // ----------------------------------------------
-      // LANGUAGE
+      // LANGUAGE INSTRUCTION
       // ----------------------------------------------
 
       let languageInstruction = "";
@@ -108,29 +119,38 @@ app.post(
 
         languageInstruction = `
 Answer completely in Hindi.
-Use simple Hindi and Devanagari script.
-Medicine names can remain in their normal spelling.
+
+Use simple Hindi.
+Use Devanagari script.
+
+Medicine names may remain in their
+normal spelling when appropriate.
 `;
 
       } else if (language === "Punjabi") {
 
         languageInstruction = `
 Answer completely in Punjabi.
-Use simple Punjabi written in Gurmukhi script.
-Medicine names can remain in their normal spelling.
+
+Use simple Punjabi.
+Use Gurmukhi script.
+
+Medicine names may remain in their
+normal spelling when appropriate.
 `;
 
       } else {
 
         languageInstruction = `
 Answer completely in English.
+
 Use simple and clear English.
 `;
       }
 
 
       // ----------------------------------------------
-      // READ IMAGE AS BASE64
+      // READ IMAGE
       // ----------------------------------------------
 
       const imageBuffer =
@@ -141,23 +161,45 @@ Use simple and clear English.
 
 
       // ----------------------------------------------
-      // DETERMINE IMAGE TYPE
+      // IMAGE MIME TYPE
       // ----------------------------------------------
 
-      let mimeType =
-        req.file.mimetype ||
-        "image/jpeg";
+      const mimeType =
+        req.file.mimetype || "image/jpeg";
+
+
+      console.log(
+        "================================"
+      );
+
+      console.log(
+        "Image received"
+      );
+
+      console.log(
+        "Language:",
+        language
+      );
+
+      console.log(
+        "MIME type:",
+        mimeType
+      );
+
+      console.log(
+        "Sending image to Groq Vision..."
+      );
 
 
       // ----------------------------------------------
-      // SEND IMAGE DIRECTLY TO GROQ VISION
+      // GROQ VISION
       // ----------------------------------------------
 
       const completion =
         await groq.chat.completions.create({
 
           model:
-            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "qwen/qwen3.6-27b",
 
           messages: [
 
@@ -174,37 +216,43 @@ You are MedScan AI.
 
 ${languageInstruction}
 
-Look directly at this prescription image.
+Look directly at the prescription image.
 
-DO NOT describe the OCR process.
-DO NOT provide extracted text separately.
+The user wants the AI answer directly.
+Do NOT show OCR text.
+Do NOT provide a separate extracted-text section.
+Do NOT mention OCR.
 
-Analyze the prescription image and give the user a useful medical-information summary.
+Analyze the prescription image.
 
-Identify medicines only when you can read them with reasonable confidence.
+Identify medicines only when you can read
+them with reasonable confidence.
 
 For each medicine, provide:
 
 1. Medicine name
-2. What it is generally used for
+2. General use
 3. Dosage/frequency if clearly visible
 4. Common side effects
 5. Important warnings
 6. Instructions visible on the prescription
 
-IMPORTANT:
+IMPORTANT SAFETY RULES:
 
 - Never invent a medicine name.
 - Never invent a dosage.
-- If something is unclear, say that it is unclear.
+- Never guess unclear handwriting.
+- If something is unclear, clearly say it is unclear.
 - Do not diagnose the patient.
-- Do not tell the patient to start, stop, or change medication.
-- Tell the user to confirm the prescription with a qualified healthcare professional.
-- Keep the answer clear and easy to understand.
+- Do not tell the patient to start, stop,
+  or change a medicine.
+- Tell the user to confirm the prescription
+  with a qualified healthcare professional.
 
 Give the final answer directly to the user.
-`,
 
+Keep the answer clear and easy to understand.
+`,
                 },
 
                 {
@@ -214,7 +262,6 @@ Give the final answer directly to the user.
                     url:
                       `data:${mimeType};base64,${base64Image}`,
                   },
-
                 },
 
               ],
@@ -228,12 +275,21 @@ Give the final answer directly to the user.
         });
 
 
+      // ----------------------------------------------
+      // GET ANSWER
+      // ----------------------------------------------
+
       const answer =
         completion
           .choices[0]
           ?.message
           ?.content ||
         "No AI response";
+
+
+      console.log(
+        "Groq response received"
+      );
 
 
       // ----------------------------------------------
@@ -249,9 +305,19 @@ Give the final answer directly to the user.
     } catch (err) {
 
       console.error(
-        "VISION ERROR:",
-        err
+        "================================"
       );
+
+      console.error(
+        "VISION ERROR:"
+      );
+
+      console.error(err);
+
+      console.error(
+        "================================"
+      );
+
 
       res.status(500).json({
         error: err.message,
@@ -260,7 +326,9 @@ Give the final answer directly to the user.
 
     } finally {
 
-      // Delete temporary image
+      // --------------------------------------------
+      // DELETE TEMPORARY IMAGE
+      // --------------------------------------------
 
       if (imagePath) {
 
@@ -273,10 +341,9 @@ Give the final answer directly to the user.
         } catch (deleteError) {
 
           console.error(
-            "Could not delete image:",
+            "Could not delete temporary image:",
             deleteError
           );
-
         }
       }
     }
@@ -284,9 +351,9 @@ Give the final answer directly to the user.
 );
 
 
-// ----------------------------------------------------
-// SERVER
-// ----------------------------------------------------
+// ====================================================
+// START SERVER
+// ====================================================
 
 const PORT =
   process.env.PORT || 3000;
