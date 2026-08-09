@@ -1,1058 +1,284 @@
-import 'dart:convert';
-import 'dart:typed_data';
+require("dotenv").config();
 
-import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart';
+const express = require("express");
+const cors = require("cors");
+const Groq = require("groq-sdk");
+const multer = require("multer");
+const fs = require("fs");
 
-class UploadScreen extends StatefulWidget {
-  UploadScreen({super.key});
+const app = express();
 
-  @override
-  State<UploadScreen> createState() =>
-      _UploadScreenState();
-}
+app.use(cors());
+app.use(express.json());
 
-class _UploadScreenState
-    extends State<UploadScreen> {
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 
-  final ImagePicker picker =
-      ImagePicker();
-
-  XFile? selectedImage;
-
-  Uint8List? imageBytes;
-
-  bool isLoading = false;
-
-  String aiAnalysis = "";
-
-  String errorMessage = "";
-
-  String selectedLanguage = "English";
+const upload = multer({
+  dest: "uploads/",
+});
 
 
-  // Render backend
-  final String backendUrl =
-      "https://medscan-backend-xaim.onrender.com/analyze-image";
+// HOME
+app.get("/", (req, res) => {
+  res.send("MedScan Backend Running With Groq Vision");
+});
 
 
-  // ==================================================
-  // PICK IMAGE
-  // ==================================================
+// TEXT AI
+app.post("/ask", async (req, res) => {
+  try {
+    const prompt = req.body.prompt;
 
-  Future<void> pickImage(
-    ImageSource source,
-  ) async {
+    if (!prompt) {
+      return res.status(400).json({
+        error: "Prompt required",
+      });
+    }
+
+    const completion =
+      await groq.chat.completions.create({
+        model: "llama-3.1-8b-instant",
+
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      });
+
+    const answer =
+      completion.choices[0]?.message?.content ||
+      "No response from AI";
+
+    res.json({
+      answer: answer,
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      error: err.message,
+    });
+  }
+});
+
+
+// IMAGE ANALYSIS
+app.post(
+  "/analyze-image",
+  upload.single("image"),
+  async (req, res) => {
+
+    let imagePath = null;
 
     try {
 
-      final XFile? image =
-          await picker.pickImage(
-        source: source,
-        imageQuality: 90,
-      );
-
-      if (image == null) {
-        return;
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No image uploaded",
+        });
       }
 
-      final Uint8List bytes =
-          await image.readAsBytes();
+      imagePath = req.file.path;
 
-      setState(() {
+      const language =
+        req.body.language || "English";
 
-        selectedImage = image;
+      let languageInstruction;
 
-        imageBytes = bytes;
+      if (language === "Punjabi") {
 
-        aiAnalysis = "";
+        languageInstruction = `
+Write the final answer ONLY in Punjabi.
 
-        errorMessage = "";
+Use Gurmukhi script.
 
-      });
+Do not write the explanation in English.
 
-    } catch (e) {
+Medicine names may remain in English if necessary.
+`;
 
-      setState(() {
+      } else if (language === "Hindi") {
 
-        errorMessage =
-            "Could not select image: $e";
+        languageInstruction = `
+Write the final answer ONLY in Hindi.
 
-      });
+Use Devanagari script.
 
-    }
-  }
+Do not write the explanation in English.
 
+Medicine names may remain in English if necessary.
+`;
 
-  // ==================================================
-  // ANALYZE PRESCRIPTION
-  // ==================================================
+      } else {
 
-  Future<void>
-      analyzePrescription() async {
-
-    if (selectedImage == null ||
-        imageBytes == null) {
-
-      setState(() {
-
-        errorMessage =
-            "Please select a prescription image first.";
-
-      });
-
-      return;
-    }
-
-
-    setState(() {
-
-      isLoading = true;
-
-      aiAnalysis = "";
-
-      errorMessage = "";
-
-    });
-
-
-    try {
-
-      final request =
-          http.MultipartRequest(
-        "POST",
-        Uri.parse(backendUrl),
-      );
-
-
-      // ----------------------------------------------
-      // SEND SELECTED LANGUAGE
-      // ----------------------------------------------
-
-      request.fields["language"] =
-          selectedLanguage;
-
-
-      // ----------------------------------------------
-      // SEND IMAGE
-      // ----------------------------------------------
-
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          "image",
-          imageBytes!,
-          filename:
-              selectedImage!.name,
-        ),
-      );
-
-
-      print(
-        "=============================="
-      );
-
-      print(
-        "Sending image to MedScan AI"
-      );
-
-      print(
-        "Language: $selectedLanguage"
-      );
-
-
-      final streamedResponse =
-          await request.send();
-
-
-      final response =
-          await http.Response.fromStream(
-        streamedResponse,
-      );
-
-
-      print(
-        "STATUS: ${response.statusCode}"
-      );
-
-      print(
-        "RESPONSE: ${response.body}"
-      );
-
-
-      // ----------------------------------------------
-      // CHECK SERVER RESPONSE
-      // ----------------------------------------------
-
-      if (response.statusCode != 200) {
-
-        throw Exception(
-          "Server error ${response.statusCode}: ${response.body}",
-        );
-
+        languageInstruction = `
+Write the final answer ONLY in English.
+`;
       }
 
 
-      // ----------------------------------------------
-      // DECODE RESPONSE
-      // ----------------------------------------------
+      // Read image
+      const imageBuffer =
+        fs.readFileSync(imagePath);
 
-      final Map<String, dynamic> data =
-          jsonDecode(response.body);
+      const base64Image =
+        imageBuffer.toString("base64");
 
+      const mimeType =
+        req.file.mimetype || "image/jpeg";
 
-      final String answer =
-          data["answer"]?.toString() ??
-              "No AI response.";
 
+      // Send image directly to AI
+      const completion =
+        await groq.chat.completions.create({
 
-      setState(() {
+          model: "qwen/qwen3.6-27b",
 
-        aiAnalysis = answer;
+          reasoning_effort: "none",
 
-        isLoading = false;
+          reasoning_format: "hidden",
 
-      });
+          messages: [
+            {
+              role: "user",
 
+              content: [
 
-    } catch (e) {
+                {
+                  type: "text",
 
-      print(
-        "ANALYSIS ERROR: $e"
-      );
+                  text: `
+You are MedScan AI.
 
+${languageInstruction}
 
-      setState(() {
+Analyze the uploaded medicine or prescription image directly.
 
-        isLoading = false;
+Do NOT provide OCR text.
 
-        errorMessage =
-            "Analysis failed: $e";
+Do NOT provide an extracted text section.
 
-      });
+Do NOT explain the OCR process.
 
-    }
-  }
+Do NOT show internal reasoning.
 
+Do NOT use <think> tags.
 
-  // ==================================================
-  // REMOVE IMAGE
-  // ==================================================
+Give ONLY the final answer.
 
-  void clearImage() {
+Provide:
 
-    setState(() {
+1. Medicine name
+2. General use
+3. Dosage/frequency only if clearly visible
+4. Common side effects
+5. Important warnings
+6. Important instructions if visible
 
-      selectedImage = null;
+Safety rules:
 
-      imageBytes = null;
+- Never invent a medicine name.
+- Never invent dosage.
+- If the image is unclear, say that it is unclear.
+- Do not diagnose the patient.
+- Do not tell the patient to start or stop medication.
+- Recommend confirming medication and dosage with a qualified healthcare professional.
 
-      aiAnalysis = "";
+${languageInstruction}
 
-      errorMessage = "";
+Return ONLY the final user-facing answer.
+`,
+                },
 
-    });
+                {
+                  type: "image_url",
 
-  }
-
-
-  // ==================================================
-  // BUILD
-  // ==================================================
-
-  @override
-  Widget build(
-    BuildContext context,
-  ) {
-
-    return Scaffold(
-
-      appBar: AppBar(
-
-        title:
-            Text(
-          "Upload Prescription",
-        ),
-
-      ),
-
-
-      body:
-          SingleChildScrollView(
-
-        padding:
-            EdgeInsets.all(20),
-
-        child:
-            Column(
-
-          children: [
-
-            // ========================================
-            // LANGUAGE
-            // ========================================
-
-            Align(
-
-              alignment:
-                  Alignment.centerLeft,
-
-              child:
-                  Text(
-
-                "Answer Language",
-
-                style:
-                    TextStyle(
-
-                  fontSize: 16,
-
-                  fontWeight:
-                      FontWeight.bold,
-
-                ),
-
-              ),
-
-            ),
-
-
-            SizedBox(
-              height: 8,
-            ),
-
-
-            Container(
-
-              width:
-                  double.infinity,
-
-              padding:
-                  EdgeInsets.symmetric(
-                horizontal: 15,
-              ),
-
-              decoration:
-                  BoxDecoration(
-
-                border:
-                    Border.all(
-                  color:
-                      Colors.blue,
-                ),
-
-                borderRadius:
-                    BorderRadius.circular(
-                  12,
-                ),
-
-              ),
-
-              child:
-                  DropdownButtonHideUnderline(
-
-                child:
-                    DropdownButton<String>(
-
-                  value:
-                      selectedLanguage,
-
-                  isExpanded:
-                      true,
-
-                  items: [
-
-                    DropdownMenuItem(
-
-                      value:
-                          "English",
-
-                      child:
-                          Text(
-                        "English",
-                      ),
-
-                    ),
-
-                    DropdownMenuItem(
-
-                      value:
-                          "Hindi",
-
-                      child:
-                          Text(
-                        "हिन्दी",
-                      ),
-
-                    ),
-
-                    DropdownMenuItem(
-
-                      value:
-                          "Punjabi",
-
-                      child:
-                          Text(
-                        "ਪੰਜਾਬੀ",
-                      ),
-
-                    ),
-
-                  ],
-
-
-                  onChanged:
-                      isLoading
-                          ? null
-                          : (value) {
-
-                              if (value ==
-                                  null) {
-                                return;
-                              }
-
-                              setState(() {
-
-                                selectedLanguage =
-                                    value;
-
-                                aiAnalysis =
-                                    "";
-
-                                errorMessage =
-                                    "";
-
-                              });
-
-                            },
-
-                ),
-
-              ),
-
-            ),
-
-
-            SizedBox(
-              height: 20,
-            ),
-
-
-            // ========================================
-            // IMAGE PREVIEW
-            // ========================================
-
-            Container(
-
-              width:
-                  double.infinity,
-
-              height: 250,
-
-              decoration:
-                  BoxDecoration(
-
-                border:
-                    Border.all(
-                  color:
-                      Colors.blue,
-                  width: 1.5,
-                ),
-
-                borderRadius:
-                    BorderRadius.circular(
-                  15,
-                ),
-
-              ),
-
-
-              child:
-
-                  imageBytes == null
-
-                      ? Center(
-
-                          child:
-                              Column(
-
-                            mainAxisAlignment:
-                                MainAxisAlignment
-                                    .center,
-
-                            children: [
-
-                              Icon(
-
-                                Icons.image,
-
-                                size:
-                                    70,
-
-                                color:
-                                    Colors.grey,
-
-                              ),
-
-                              SizedBox(
-                                height:
-                                    10,
-                              ),
-
-                              Text(
-
-                                "Select prescription image",
-
-                                style:
-                                    TextStyle(
-
-                                  color:
-                                      Colors.grey,
-
-                                  fontSize:
-                                      16,
-
-                                ),
-
-                              ),
-
-                            ],
-
-                          ),
-
-                        )
-
-                      : ClipRRect(
-
-                          borderRadius:
-                              BorderRadius.circular(
-                            15,
-                          ),
-
-                          child:
-                              Image.memory(
-
-                            imageBytes!,
-
-                            fit:
-                                BoxFit.contain,
-
-                          ),
-
-                        ),
-
-            ),
-
-
-            SizedBox(
-              height: 20,
-            ),
-
-
-            // ========================================
-            // CAMERA + GALLERY
-            // ========================================
-
-            Row(
-
-              children: [
-
-                Expanded(
-
-                  child:
-                      ElevatedButton.icon(
-
-                    onPressed:
-                        isLoading
-                            ? null
-                            : () {
-
-                                pickImage(
-                                  ImageSource
-                                      .camera,
-                                );
-
-                              },
-
-                    icon:
-                        Icon(
-                      Icons.camera_alt,
-                    ),
-
-                    label:
-                        Text(
-                      "Camera",
-                    ),
-
-                  ),
-
-                ),
-
-
-                SizedBox(
-                  width: 10,
-                ),
-
-
-                Expanded(
-
-                  child:
-                      ElevatedButton.icon(
-
-                    onPressed:
-                        isLoading
-                            ? null
-                            : () {
-
-                                pickImage(
-                                  ImageSource
-                                      .gallery,
-                                );
-
-                              },
-
-                    icon:
-                        Icon(
-                      Icons.photo,
-                    ),
-
-                    label:
-                        Text(
-                      "Gallery",
-                    ),
-
-                  ),
-
-                ),
+                  image_url: {
+                    url:
+                      `data:${mimeType};base64,${base64Image}`,
+                  },
+                },
 
               ],
-
-            ),
-
-
-            SizedBox(
-              height: 15,
-            ),
-
-
-            // ========================================
-            // REMOVE IMAGE
-            // ========================================
-
-            if (selectedImage != null)
-
-              SizedBox(
-
-                width:
-                    double.infinity,
-
-                child:
-                    OutlinedButton.icon(
-
-                  onPressed:
-                      isLoading
-                          ? null
-                          : clearImage,
-
-                  icon:
-                      Icon(
-                    Icons.delete_outline,
-                  ),
-
-                  label:
-                      Text(
-                    "Remove Image",
-                  ),
-
-                ),
-
-              ),
-
-
-            SizedBox(
-              height: 15,
-            ),
-
-
-            // ========================================
-            // ANALYZE BUTTON
-            // ========================================
-
-            SizedBox(
-
-              width:
-                  double.infinity,
-
-              height: 52,
-
-              child:
-                  ElevatedButton.icon(
-
-                onPressed:
-                    selectedImage ==
-                                null ||
-                            isLoading
-                        ? null
-                        : analyzePrescription,
-
-
-                icon:
-
-                    isLoading
-
-                        ? SizedBox(
-
-                            width:
-                                20,
-
-                            height:
-                                20,
-
-                            child:
-                                CircularProgressIndicator(
-
-                              strokeWidth:
-                                  2,
-
-                              color:
-                                  Colors.white,
-
-                            ),
-
-                          )
-
-                        : Icon(
-                            Icons
-                                .smart_toy,
-                          ),
-
-
-                label:
-
-                    Text(
-
-                  isLoading
-
-                      ? "Analyzing..."
-
-                      : "Analyze Prescription",
-
-                ),
-
-              ),
-
-            ),
-
-
-            SizedBox(
-              height: 25,
-            ),
-
-
-            // ========================================
-            // LOADING
-            // ========================================
-
-            if (isLoading)
-
-              Column(
-
-                children: [
-
-                  CircularProgressIndicator(),
-
-                  SizedBox(
-                    height: 12,
-                  ),
-
-                  Text(
-
-                    "AI is analyzing your image...",
-
-                    textAlign:
-                        TextAlign.center,
-
-                  ),
-
-                ],
-
-              ),
-
-
-            // ========================================
-            // ERROR
-            // ========================================
-
-            if (errorMessage.isNotEmpty)
-
-              Card(
-
-                color:
-                    Colors.red.shade50,
-
-                child:
-                    Padding(
-
-                  padding:
-                      EdgeInsets.all(
-                    16,
-                  ),
-
-                  child:
-                      Row(
-
-                    crossAxisAlignment:
-                        CrossAxisAlignment
-                            .start,
-
-                    children: [
-
-                      Icon(
-
-                        Icons
-                            .error_outline,
-
-                        color:
-                            Colors.red,
-
-                      ),
-
-                      SizedBox(
-                        width: 10,
-                      ),
-
-                      Expanded(
-
-                        child:
-                            Text(
-
-                          errorMessage,
-
-                          style:
-                              TextStyle(
-
-                            color:
-                                Colors.red,
-
-                          ),
-
-                        ),
-
-                      ),
-
-                    ],
-
-                  ),
-
-                ),
-
-              ),
-
-
-            // ========================================
-            // AI ANSWER
-            // ========================================
-
-            if (aiAnalysis.isNotEmpty)
-
-              Card(
-
-                elevation:
-                    5,
-
-                margin:
-                    EdgeInsets.only(
-                  top: 15,
-                ),
-
-                shape:
-                    RoundedRectangleBorder(
-
-                  borderRadius:
-                      BorderRadius.circular(
-                    18,
-                  ),
-
-                ),
-
-
-                child:
-                    Padding(
-
-                  padding:
-                      EdgeInsets.all(
-                    20,
-                  ),
-
-                  child:
-                      Column(
-
-                    crossAxisAlignment:
-                        CrossAxisAlignment
-                            .start,
-
-                    children: [
-
-                      Row(
-
-                        children: [
-
-                          Icon(
-
-                            Icons
-                                .smart_toy,
-
-                            color:
-                                Colors.purple,
-
-                            size:
-                                30,
-
-                          ),
-
-                          SizedBox(
-                            width: 10,
-                          ),
-
-                          Text(
-
-                            "MedScan AI",
-
-                            style:
-                                TextStyle(
-
-                              fontSize:
-                                  21,
-
-                              fontWeight:
-                                  FontWeight.bold,
-
-                            ),
-
-                          ),
-
-                        ],
-
-                      ),
-
-
-                      SizedBox(
-                        height: 18,
-                      ),
-
-
-                      SelectableText(
-
-                        aiAnalysis,
-
-                        style:
-                            TextStyle(
-
-                          fontSize:
-                              16,
-
-                          height:
-                              1.5,
-
-                        ),
-
-                      ),
-
-                    ],
-
-                  ),
-
-                ),
-
-              ),
-
-
-            // ========================================
-            // SAFETY NOTICE
-            // ========================================
-
-            if (aiAnalysis.isNotEmpty)
-
-              Container(
-
-                margin:
-                    EdgeInsets.only(
-                  top: 15,
-                ),
-
-                padding:
-                    EdgeInsets.all(
-                  14,
-                ),
-
-                decoration:
-                    BoxDecoration(
-
-                  color:
-                      Colors.orange
-                          .shade50,
-
-                  borderRadius:
-                      BorderRadius.circular(
-                    12,
-                  ),
-
-                ),
-
-
-                child:
-                    Row(
-
-                  crossAxisAlignment:
-                      CrossAxisAlignment
-                          .start,
-
-                  children: [
-
-                    Icon(
-
-                      Icons
-                          .warning_amber,
-
-                      color:
-                          Colors.orange,
-
-                    ),
-
-                    SizedBox(
-                      width: 10,
-                    ),
-
-
-                    Expanded(
-
-                      child:
-                          Text(
-
-                        "MedScan AI provides informational assistance only. Confirm medicines and dosage with a qualified healthcare professional.",
-
-                      ),
-
-                    ),
-
-                  ],
-
-                ),
-
-              ),
-
-
-            SizedBox(
-              height: 30,
-            ),
-
+            },
           ],
 
-        ),
+          temperature: 0.2,
 
-      ),
+          max_completion_tokens: 1500,
+        });
 
-    );
 
+      let answer =
+        completion.choices[0]?.message?.content ||
+        "No AI response";
+
+
+      // Remove any accidental thinking tags
+      answer = answer
+        .replace(
+          /<think>[\s\S]*?<\/think>/gi,
+          ""
+        )
+        .replace(
+          /<think>[\s\S]*/gi,
+          ""
+        )
+        .trim();
+
+
+      res.json({
+        answer: answer,
+        language: language,
+      });
+
+
+    } catch (err) {
+
+      console.error("VISION ERROR:");
+      console.error(err);
+
+      res.status(500).json({
+        error: err.message,
+      });
+
+    } finally {
+
+      if (imagePath) {
+
+        try {
+
+          if (fs.existsSync(imagePath)) {
+            fs.unlinkSync(imagePath);
+          }
+
+        } catch (error) {
+
+          console.error(
+            "Could not delete temporary image:",
+            error
+          );
+
+        }
+      }
+    }
   }
-}
+);
+
+
+// START SERVER
+const PORT =
+  process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+
+  console.log(
+    `Server running on port ${PORT}`
+  );
+
+});
